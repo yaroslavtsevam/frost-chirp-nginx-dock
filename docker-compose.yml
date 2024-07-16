@@ -1,0 +1,107 @@
+services:
+  frost:
+    image: fraunhoferiosb/frost-server:2.4
+    environment:
+      - serviceRootUrl=http://192.168.1.1:8080/FROST-Server
+      - http_cors_enable=true
+      - http_cors_allowed.origins=*
+      - bus_busImplementationClass=de.fraunhofer.iosb.ilt.sta.messagebus.InternalMessageBus
+      - persistence_db_driver=org.postgres.Driver
+      - persistence_db_url=jdbc:postgres://postgres:5432/sensorthings
+      - persistence_db_username=frost
+      - persistence_db_password=frost
+      - persistence_autoUpdateDatabase=true
+    ports:
+      - 8080:8080
+    depends_on:
+      - postgres
+
+  chirpstack:
+    image: chirpstack/chirpstack:4
+    command: -c /etc/chirpstack
+    restart: unless-stopped
+    volumes:
+      - ./configuration/chirpstack:/etc/chirpstack
+      - ./lorawan-devices:/opt/lorawan-devices
+    depends_on:
+      - postgres
+      - mosquitto
+      - redis
+    environment:
+      - MQTT_BROKER_HOST=mosquitto
+      - REDIS_HOST=redis
+      - POSTGRESQL_HOST=postgres
+    ports:
+      - 8100:8100
+
+  chirpstack-gateway-bridge:
+    image: chirpstack/chirpstack-gateway-bridge:4
+    restart: unless-stopped
+    ports:
+      - 1700:1700/udp
+    volumes:
+      - ./configuration/chirpstack-gateway-bridge:/etc/chirpstack-gateway-bridge
+    environment:
+      - INTEGRATION__MQTT__EVENT_TOPIC_TEMPLATE=eu868/gateway/{{ .GatewayID }}/event/{{ .EventType }}
+      - INTEGRATION__MQTT__STATE_TOPIC_TEMPLATE=eu868/gateway/{{ .GatewayID }}/state/{{ .StateType }}
+      - INTEGRATION__MQTT__COMMAND_TOPIC_TEMPLATE=eu868/gateway/{{ .GatewayID }}/command/#
+    depends_on:
+      - mosquitto
+  
+  chirpstack-gateway-bridge-basicstation:
+    image: chirpstack/chirpstack-gateway-bridge:4
+    restart: unless-stopped
+    command: -c /etc/chirpstack-gateway-bridge/chirpstack-gateway-bridge-basicstation-eu868.toml
+    ports:
+      - 3001:3001
+    volumes:
+      - ./configuration/chirpstack-gateway-bridge:/etc/chirpstack-gateway-bridge
+    depends_on:
+      - mosquitto
+
+  chirpstack-rest-api:
+    image: chirpstack/chirpstack-rest-api:4
+    restart: unless-stopped
+    command: --server chirpstack:8080 --bind 0.0.0.0:8090 --insecure
+    ports:
+      - 8090:8090
+    depends_on:
+      - chirpstack
+
+  postgres:
+    image: kartoza/postgis:16-3.4
+    restart: unless-stopped
+    volumes:
+      - ./configuration/postgresql/initdb:/docker-entrypoint-initdb.d
+      - postgresqldata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=root
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save 300 1 --save 60 100 --appendonly no
+    volumes:
+      - redisdata:/data
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - 1883:1883
+    volumes: 
+      - ./configuration/mosquitto/config/:/mosquitto/config/
+
+  node-red:
+    image: nodered/node-red:latest
+    environment:
+      - TZ=Europe/Moscow
+    ports:
+      - "1880:1880"
+    volumes:
+      - nodereddata:/data
+
+volumes:
+  postgresqldata:
+  nodereddata:
+  redisdata:
